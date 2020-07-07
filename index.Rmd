@@ -1,0 +1,148 @@
+---
+title: "Performing Bechdel Test on Uncanny X-Men Dataset"
+author: "Gaurav Sharma"
+date: "03/07/2020"
+output: github_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(tidymodels)
+```
+
+# Lets load the data
+```{r}
+
+tt_data <- tidytuesdayR::tt_load("2020-06-30")
+character_visualization <- tt_data$character_visualization
+locations <- tt_data$locations
+xmen_bechdel <- tt_data$xmen_bechdel
+
+```
+
+```{r}
+locations %>% 
+    group_by(issue) %>% 
+    summarise(mansion = "X-Mansion" %in% location)
+```
+
+```{r}
+x_mansion <- locations %>% 
+    group_by(issue) %>% 
+    summarise(mansion = "X-Mansion" %in% location)
+
+per_issue <- character_visualization %>% 
+    group_by(issue) %>% 
+    summarise(across(speech:depicted, sum)) %>% 
+    ungroup()
+
+location_joined <- per_issue %>%
+    inner_join(x_mansion)
+
+```
+
+# Lets do some visualizations
+```{r}
+
+location_joined %>% 
+    mutate(mansion = if_else(mansion, "X-Mansion", "No Mansion")) %>% 
+    pivot_longer(speech:depicted, names_to = "visualization") %>% 
+    ggplot(aes(mansion, value, color = visualization, fill = visualization)) +
+    geom_dotplot(binaxis = "y", stackdir = "center", binpositions = "all" ,show.legend = F) +
+    facet_wrap(~visualization, scales = "free_y")
+
+```
+
+# Lets do modelling for X-Mansion
+```{r}
+
+boots <- location_joined %>% 
+    bootstraps(strata = mansion, times = 1000, apparent = TRUE)
+
+boot_models <- boots %>%
+    mutate(model = map(
+        splits,
+        ~ glm(
+            mansion ~ speech + thought + narrative + depicted,
+            family = "binomial",
+            data = analysis(.)
+        )
+    ),
+    coef_info = map(model, tidy)) 
+
+```
+
+```{r}
+boot_models %>% 
+    unnest(coef_info)
+
+int_pctl(boot_models, coef_info)
+```
+
+```{r}
+boot_models %>% 
+    unnest(coef_info) %>%
+    filter(term != "(Intercept)") %>% 
+    ggplot(aes(estimate, fill = term)) +
+    geom_histogram(alpha = 0.7, show.legend = F, bins = 25) +
+    geom_vline(xintercept = 0, lty = 2, color = "gray", size = 2) +
+    facet_wrap(~term, scales = "free")
+```
+
+
+# Lets do modelling for Bechdel Test
+```{r}
+
+
+bechdel_joined <- per_issue %>%
+    inner_join(xmen_bechdel) %>% 
+    mutate(pass_bechdel = if_else(pass_bechdel == "yes", TRUE, FALSE))
+
+
+bechdel_joined %>% 
+    mutate(pass_bechdel = if_else(pass_bechdel, "Passes Bechdel", "No Bechdel")) %>% 
+    pivot_longer(speech:depicted, names_to = "visualization") %>% 
+    ggplot(aes(pass_bechdel, value, color = visualization, fill = visualization)) +
+    geom_dotplot(binaxis = "y", stackdir = "center", binpositions = "all" ,show.legend = F) +
+    facet_wrap(~visualization, scales = "free_y")
+```
+
+```{r}
+boots_bechdel <- bechdel_joined %>% 
+    bootstraps(strata = pass_bechdel, times = 1000, apparent = TRUE)
+
+bechdel_models <- boots_bechdel %>%
+    mutate(model = map(
+        splits,
+        ~ glm(
+            pass_bechdel ~ speech + thought + narrative + depicted,
+            family = "binomial",
+            data = analysis(.)
+        )
+    ),
+    coef_info = map(model, tidy)) 
+```
+
+
+```{r}
+bechdel_models %>% 
+    unnest(coef_info)
+
+int_pctl(bechdel_models, coef_info)
+```
+
+```{r}
+bechdel_models %>% 
+    unnest(coef_info) %>%
+    filter(term != "(Intercept)") %>% 
+    ggplot(aes(estimate, fill = term)) +
+    geom_histogram(alpha = 0.7, show.legend = F, bins = 25) +
+    geom_vline(xintercept = 0, lty = 2, color = "gray", size = 2) +
+    facet_wrap(~term, scales = "free")
+```
+
+
+
